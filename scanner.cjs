@@ -1,6 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { TextDecoder } = require("node:util");
+const { pathToFileURL } = require("node:url");
 
 const decoder = new TextDecoder("utf-8", { fatal: true });
 const binaryControls = /[\x00-\x08\x0b\x0e-\x1f]/;
@@ -186,14 +187,26 @@ function readConfig(workspaceRoot) {
     throw new Error(`Could not read ${configPath}: ${error.message}`);
   }
   const scope = workspacePath(root, config?.scope, "Scope", "directory");
-  if (!Array.isArray(config.rules)) {
-    throw new Error("Configuration rules must be an array.");
+  const hasRules = Array.isArray(config.rules);
+  const hasScanner = config.scanner !== undefined;
+  if (hasRules === hasScanner) {
+    throw new Error("Configuration must define exactly one of rules or scanner.");
+  }
+  if (hasScanner) {
+    const scanner = workspacePath(root, config.scanner, "Scanner", "file");
+    if (!scanner.relative.endsWith(".mjs")) {
+      throw new Error("Scanner must point to an .mjs module.");
+    }
+    return { root, scope, scanner };
   }
   return { root, scope, ruleEntries: config.rules };
 }
 
 function scan(workspaceRoot) {
   const { root, scope, ruleEntries } = readConfig(workspaceRoot);
+  if (!ruleEntries) {
+    throw new Error("This configuration uses a scanner module; use scanWorkspace().");
+  }
   const rules = loadRules(root, ruleEntries);
   let scannedFiles = 0;
   const findings = [];
@@ -222,4 +235,62 @@ function scan(workspaceRoot) {
   };
 }
 
-module.exports = { readConfig, scan };
+function validateScannerReport(report, scope) {
+  if (
+    !report ||
+    !Number.isSafeInteger(report.scannedFiles) ||
+    report.scannedFiles < 0 ||
+    !Array.isArray(report.rules) ||
+    !Array.isArray(report.findings)
+  ) {
+    throw new Error("Scanner returned an invalid report.");
+  }
+  const ids = new Set();
+  for (const rule of report.rules) {
+    if (
+      typeof rule?.id !== "string" ||
+      !rule.id ||
+      typeof rule.guidance !== "string" ||
+      ids.has(rule.id)
+    ) {
+      throw new Error("Scanner returned an invalid or duplicate rule.");
+    }
+    ids.add(rule.id);
+  }
+  for (const finding of report.findings) {
+    if (
+      typeof finding?.file !== "string" ||
+      !(finding.file === scope || finding.file.startsWith(`${scope}/`)) ||
+      !ids.has(finding.ruleId) ||
+      !["error", "warning"].includes(finding.severity) ||
+      !Number.isSafeInteger(finding.line) ||
+      finding.line < 1 ||
+      !Number.isSafeInteger(finding.column) ||
+      finding.column < 1 ||
+      typeof finding.message !== "string"
+    ) {
+      throw new Error("Scanner returned an invalid finding.");
+    }
+  }
+  return {
+    ...report,
+    schemaVersion: 1,
+    scope,
+  };
+}
+
+async function scanWorkspace(workspaceRoot) {
+  const config = readConfig(workspaceRoot);
+  if (!config.scanner) return scan(config.root);
+  const loaded = await import(pathToFileURL(config.scanner.absolute).href);
+  if (typeof loaded.default !== "function") {
+    throw new Error("Scanner module must export a default function.");
+  }
+  const report = await loaded.default({
+    root: config.root,
+    scope: config.scope.relative,
+  });
+  return validateScannerReport(report, config.scope.relative);
+}
+
+module.exports = { readConfig, scan, scanWorkspace };

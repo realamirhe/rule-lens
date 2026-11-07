@@ -4,7 +4,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
-const { readConfig, scan } = require("../scanner.cjs");
+const { readConfig, scan, scanWorkspace } = require("../scanner.cjs");
 
 const cli = path.join(__dirname, "..", "cli.cjs");
 
@@ -135,6 +135,53 @@ test("loads a project rule and includes its guidance and findings", (t) => {
       message: "target/a.txt",
     },
   ]);
+});
+
+test("loads a project scanner and validates its report", async (t) => {
+  const root = workspace(t);
+  fs.writeFileSync(
+    path.join(root, "rule-lens.json"),
+    JSON.stringify({ scope: "target", scanner: "./scanner.mjs" }),
+  );
+  fs.writeFileSync(
+    path.join(root, "scanner.mjs"),
+    [
+      "export default async function scan({ root, scope }) {",
+      '  if (!root || scope !== "target") throw new Error("wrong input");',
+      "  return {",
+      "    scannedFiles: 1,",
+      '    rules: [{ id: "project/test", guidance: "Fix the test." }],',
+      '    findings: [{ file: "target/a.txt", ruleId: "project/test", severity: "error", line: 2, column: 3, message: "Found it." }],',
+      "  };",
+      "}",
+    ].join("\n"),
+  );
+
+  const report = await scanWorkspace(root);
+  assert.equal(report.schemaVersion, 1);
+  assert.equal(report.scope, "target");
+  assert.equal(report.findings[0].ruleId, "project/test");
+  assert.throws(() => scan(root), /use scanWorkspace/);
+});
+
+test("rejects invalid scanner configuration and output", async (t) => {
+  const root = workspace(t);
+  const config = (value) =>
+    fs.writeFileSync(path.join(root, "rule-lens.json"), JSON.stringify(value));
+
+  config({ scope: "target", rules: [], scanner: "./scanner.mjs" });
+  assert.throws(() => readConfig(root), /exactly one/);
+
+  config({ scope: "target", scanner: "./scanner.cjs" });
+  fs.writeFileSync(path.join(root, "scanner.cjs"), "module.exports = () => ({});");
+  assert.throws(() => readConfig(root), /\.mjs module/);
+
+  config({ scope: "target", scanner: "./scanner.mjs" });
+  fs.writeFileSync(
+    path.join(root, "scanner.mjs"),
+    'export default () => ({ scannedFiles: 1, rules: [], findings: [{ file: "outside.txt" }] });',
+  );
+  await assert.rejects(() => scanWorkspace(root), /invalid finding/);
 });
 
 test("rejects unrecognized rules and invalid or linked plugin files", (t) => {

@@ -80,8 +80,14 @@ function readReport(root, stdout) {
 function findingRange(item, document) {
   const line = item.line - 1;
   const column = item.column - 1;
-  if (!document) return new vscode.Range(line, column, line, column + 1);
+  const rawEndLine = Number.isSafeInteger(item.endLine) ? item.endLine - 1 : line;
+  const rawEndColumn = Number.isSafeInteger(item.endColumn) ? item.endColumn - 1 : column + 1;
+  if (!document) return new vscode.Range(line, column, rawEndLine, rawEndColumn);
   const start = document.validatePosition(new vscode.Position(line, column));
+  if (Number.isSafeInteger(item.endLine) && Number.isSafeInteger(item.endColumn)) {
+    const end = document.validatePosition(new vscode.Position(rawEndLine, rawEndColumn));
+    return new vscode.Range(start, end);
+  }
   const text = document.lineAt(start.line).text;
   const width = text.codePointAt(start.character) > 0xffff ? 2 : 1;
   const end = document.validatePosition(start.translate(0, width));

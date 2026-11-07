@@ -25,6 +25,20 @@ Create `rule-lens.json` in the VS Code workspace folder:
 }
 ```
 
+For a project-owned whole-scope scanner, use an executable ESM module instead:
+
+```json
+{
+  "scope": "src/features/search",
+  "scanner": "./scripts/rule-lens-search.mjs"
+}
+```
+
+The `.mjs` module must default-export an async or synchronous function receiving
+`{ root, scope }`. It returns `scannedFiles`, `rules`, and `findings`. RuleLens
+adds the portable report schema and configured scope after validating the result.
+Choose exactly one of `rules` or `scanner`.
+
 Set `scope` to an existing subfolder. The scanner visits its nested directories and reads regular UTF-8 text files. It skips binary files and symbolic links. An empty scope, the workspace root, and paths that leave the workspace are invalid. A workspace without a config has no active review.
 
 The two built-in rules are opt-in. Remove the example plugin entry if you do not have a local rule file. Rule modules are executable Node code. Review them before enabling a workspace or running the CLI. Rules can access files with the user's permissions. The scope limits the scanner's own file traversal.
@@ -45,7 +59,7 @@ Give the agent the JSON report and access to the same workspace. `findings` cont
 
 ## Add a project rule
 
-A local `.cjs` module exports an `id`, a `guidance` string, and `check({ file, text })`. The check returns an array of findings with `severity` (`error` or `warning`), `line`, `column`, and `message`. The scanner supplies the workspace-relative `file` with forward slashes and adds the rule ID to each result. Send rule logs to stderr so stdout remains valid JSON.
+A local `.cjs` rule module exports an `id`, a `guidance` string, and `check({ file, text })`. The check returns an array of findings with `severity` (`error` or `warning`), `line`, `column`, and `message`. The scanner supplies the workspace-relative `file` with forward slashes and adds the rule ID to each result. Send rule logs to stderr so stdout remains valid JSON.
 
 Keep product paths, policy, and framework assumptions in the consuming workspace's rule modules. Use `examples/demo/rules/review-note.cjs` as a template. Keep shared rules opt-in and add fixtures for any policy you migrate.
 
