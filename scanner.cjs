@@ -3,6 +3,7 @@ const path = require("node:path");
 const { TextDecoder } = require("node:util");
 const { pathToFileURL } = require("node:url");
 const catalog = require("./rules/index.cjs");
+const { executionConfig } = require("./runtime.cjs");
 
 const decoder = new TextDecoder("utf-8", { fatal: true });
 const binaryControls = /[\x00-\x08\x0b\x0e-\x1f]/;
@@ -135,6 +136,7 @@ function readConfig(workspaceRoot) {
     throw new Error(`Could not read ${configPath}: ${error.message}`);
   }
   const scope = workspacePath(root, config?.scope, "Scope", "directory");
+  const execution = executionConfig(config?.execution);
   const hasRules = Array.isArray(config.rules);
   const hasScanner = config.scanner !== undefined;
   const hasRuleSources = config.ruleSources !== undefined;
@@ -152,7 +154,7 @@ function readConfig(workspaceRoot) {
     if (!scanner.relative.endsWith(".mjs")) {
       throw new Error("Scanner must point to an .mjs module.");
     }
-    return { root, scope, scanner };
+    return { root, scope, scanner, execution };
   }
   const ruleSources = (config.ruleSources || []).map((entry) => {
     const source = workspacePath(root, entry, "Rule source", "file");
@@ -161,7 +163,7 @@ function readConfig(workspaceRoot) {
     }
     return source;
   });
-  return { root, scope, ruleEntries: config.rules, ruleSources };
+  return { root, scope, ruleEntries: config.rules, ruleSources, execution };
 }
 
 function scan(workspaceRoot) {
@@ -228,6 +230,7 @@ async function scanRuleSources(config) {
           root: config.root,
           scope: config.scope.relative,
           rules: config.ruleEntries,
+          execution: config.execution,
         }),
         config.scope.relative,
       ),
@@ -305,6 +308,7 @@ async function scanWorkspace(workspaceRoot) {
   const report = await loaded.default({
     root: config.root,
     scope: config.scope.relative,
+    execution: config.execution,
   });
   return validateScannerReport(report, config.scope.relative);
 }

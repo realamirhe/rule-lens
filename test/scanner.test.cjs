@@ -141,13 +141,17 @@ test("loads a project scanner and validates its report", async (t) => {
   const root = workspace(t);
   fs.writeFileSync(
     path.join(root, "rule-lens.json"),
-    JSON.stringify({ scope: "target", scanner: "./scanner.mjs" }),
+    JSON.stringify({
+      scope: "target",
+      scanner: "./scanner.mjs",
+      execution: { timeoutMs: 150000, nodePath: "node-custom" },
+    }),
   );
   fs.writeFileSync(
     path.join(root, "scanner.mjs"),
     [
-      "export default async function scan({ root, scope }) {",
-      '  if (!root || scope !== "target") throw new Error("wrong input");',
+      "export default async function scan({ root, scope, execution }) {",
+      '  if (!root || scope !== "target" || execution.timeoutMs !== 150000 || execution.nodePath !== "node-custom") throw new Error("wrong input");',
       "  return {",
       "    scannedFiles: 1,",
       '    rules: [{ id: "project/test", guidance: "Fix the test." }],',
@@ -221,6 +225,12 @@ test("rejects invalid scanner configuration and output", async (t) => {
   config({ scope: "target", scanner: "./scanner.cjs" });
   fs.writeFileSync(path.join(root, "scanner.cjs"), "module.exports = () => ({});");
   assert.throws(() => readConfig(root), /\.mjs module/);
+
+  config({ scope: "target", rules: [], execution: { timeoutMs: 999 } });
+  assert.throws(() => readConfig(root), /execution\.timeoutMs/);
+
+  config({ scope: "target", rules: [], execution: { nodePath: "" } });
+  assert.throws(() => readConfig(root), /execution\.nodePath/);
 
   config({ scope: "target", scanner: "./scanner.mjs" });
   fs.writeFileSync(

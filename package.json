@@ -3,7 +3,7 @@
   "displayName": "RuleLens",
   "description": "Show scoped review findings in VS Code and export the same findings for agents.",
   "publisher": "rule-lens-local",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "engines": {
     "node": ">=18.3",
@@ -21,6 +21,23 @@
     "virtualWorkspaces": { "supported": false }
   },
   "contributes": {
+    "configuration": {
+      "title": "RuleLens",
+      "properties": {
+        "ruleLens.nodePath": {
+          "type": "string",
+          "default": "",
+          "description": "Standalone Node executable path or command. Empty uses RULE_LENS_NODE, then node from PATH."
+        },
+        "ruleLens.timeoutMs": {
+          "type": "integer",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 900000,
+          "description": "Scan timeout in milliseconds. Zero uses execution.timeoutMs from rule-lens.json."
+        }
+      }
+    },
     "commands": [
       { "command": "ruleLens.refresh", "title": "RuleLens: Refresh" },
       { "command": "ruleLens.showFileFindings", "title": "RuleLens: Show File Findings" },

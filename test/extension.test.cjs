@@ -8,7 +8,7 @@ const { test } = require('node:test');
 test('editor gates scans by trust and config, and drops stale diagnostics', async (t) => {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'rule-lens-editor-'));
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
-  const configured = path.join(base, 'configured');
+  const configured = path.join(base, 'configured (space)');
   const unconfigured = path.join(base, 'unconfigured');
   fs.mkdirSync(path.join(configured, 'src'), { recursive: true });
   fs.mkdirSync(unconfigured);
@@ -55,6 +55,7 @@ test('editor gates scans by trust and config, and drops stale diagnostics', asyn
       workspaceFolders: folders,
       textDocuments: [],
       getWorkspaceFolder: () => folders[0],
+      getConfiguration: () => ({ get: (_name, fallback) => fallback }),
       createFileSystemWatcher: () => ({
         ...disposable,
         onDidCreate() {},
@@ -100,8 +101,24 @@ test('editor gates scans by trust and config, and drops stale diagnostics', asyn
       if (name === 'vscode') return vscode;
       if (name === 'node:child_process') {
         return {
+          spawnSync() {
+            return { status: 0, signal: null, stdout: 'v24.12.0\n', stderr: '' };
+          },
           execFile(executable, args, options, complete) {
-            const child = { executable, args, options, complete, killed: false, kill() { this.killed = true; } };
+            const child = {
+              executable,
+              args,
+              options,
+              complete,
+              killed: false,
+              exitCode: null,
+              signalCode: null,
+              signals: [],
+              kill(signal) {
+                this.killed = true;
+                this.signals.push(signal);
+              },
+            };
             children.push(child);
             return child;
           },
@@ -139,8 +156,9 @@ test('editor gates scans by trust and config, and drops stale diagnostics', asyn
   handlers.trust();
   assert.equal(children.length, 1);
   assert.deepEqual(children[0].args.slice(-2), ['--root', configured]);
-  assert.equal(children[0].executable, process.execPath);
-  assert.equal(children[0].options.env.ELECTRON_RUN_AS_NODE, '1');
+  assert.equal(children[0].executable, 'node');
+  assert.equal(children[0].options.timeout, 120000);
+  assert.equal(children[0].options.env, process.env);
   children[0].complete(null, report, '');
   assert.deepEqual(diagnostics.get(file)[0].range.coordinates, [1, 2, 1, 3]);
   await commands.get('ruleLens.showFileFindings')();
@@ -159,12 +177,14 @@ test('editor gates scans by trust and config, and drops stale diagnostics', asyn
   commands.get('ruleLens.refresh')();
   handlers.save(document);
   assert.equal(children[2].killed, true);
+  assert.deepEqual(children[2].signals, ['SIGTERM']);
   children[2].complete(null, report, '');
   assert.equal(diagnostics.size, 0);
 
   commands.get('ruleLens.refresh')();
   commands.get('ruleLens.clear')();
   assert.equal(children[3].killed, true);
+  assert.deepEqual(children[3].signals, ['SIGTERM']);
   children[3].complete(null, report, '');
   assert.equal(diagnostics.size, 0);
 });

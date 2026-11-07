@@ -76,6 +76,8 @@ def package(target):
         "extension.cjs",
         "cli.cjs",
         "scanner.cjs",
+        "runtime.cjs",
+        "runner.cjs",
         *sorted(str(file.relative_to(ROOT).as_posix()) for file in (ROOT / "media").glob("*.svg")),
         *sorted(
             str(file.relative_to(ROOT).as_posix())

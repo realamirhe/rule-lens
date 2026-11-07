@@ -1,10 +1,20 @@
 #!/usr/bin/env node
 
 const { parseArgs } = require("node:util");
+const {
+  errorChain,
+  minimumNodeLabel,
+  supportedNodeVersion,
+} = require("./runtime.cjs");
 const { scanWorkspace } = require("./scanner.cjs");
 
 async function main() {
   try {
+    if (!supportedNodeVersion(process.versions.node)) {
+      throw new Error(
+        `Node ${minimumNodeLabel()} or later is required; running ${process.version}.`,
+      );
+    }
     const { values } = parseArgs({
       options: {
         root: { type: "string" },
@@ -23,7 +33,7 @@ async function main() {
       process.stdout.write(`${JSON.stringify(output, null, 2)}\n`);
     }
   } catch (error) {
-    process.stderr.write(`rule-lens: ${error?.message ?? error}\n`);
+    process.stderr.write(`rule-lens: ${errorChain(error)}\n`);
     process.exitCode = 1;
   }
 }

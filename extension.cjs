@@ -3,6 +3,14 @@ const { execFile } = require('node:child_process');
 const { existsSync } = require('node:fs');
 const path = require('node:path');
 const { readConfig } = require('./scanner.cjs');
+const { errorChain } = require('./runtime.cjs');
+const {
+  parseJson,
+  processContext,
+  processFailure,
+  resolveExecution,
+  terminate,
+} = require('./runner.cjs');
 
 const configName = 'rule-lens.json';
 const cliPath = path.join(__dirname, 'cli.cjs');
@@ -33,7 +41,12 @@ function resolveRelative(directory, relative) {
 }
 
 function readReport(root, stdout) {
-  const report = JSON.parse(stdout);
+  let report;
+  try {
+    report = parseJson(stdout);
+  } catch (cause) {
+    throw cause;
+  }
   if (
     report?.schemaVersion !== 1 ||
     !Array.isArray(report.findings) ||
@@ -175,14 +188,14 @@ function activate(context) {
   function cancel(state) {
     clearTimeout(state.timer);
     state.generation += 1;
-    state.child?.kill();
+    terminate(state.child);
     state.child = undefined;
   }
 
   function fail(state, failure, manual) {
     removeFindings(state);
     state.status = 'failed';
-    output.appendLine(`[${state.root}] ${failure.message}`);
+    output.appendLine(`[${state.root}] ${errorChain(failure)}`);
     if (manual) {
       vscode.window.showErrorMessage('RuleLens failed for a workspace folder. See the RuleLens output channel.');
     }
@@ -200,23 +213,45 @@ function activate(context) {
       return false;
     }
 
+    let config;
     try {
-      state.scope = resolveRelative(state.root, readConfig(state.root).scope.relative);
+      config = readConfig(state.root);
+      state.scope = resolveRelative(state.root, config.scope.relative);
     } catch (failure) {
       fail(state, failure, manual);
       return true;
     }
 
     const generation = state.generation;
+    const settings = vscode.workspace.getConfiguration('ruleLens', state.folder.uri);
+    const settingNode = settings.get('nodePath', '').trim();
+    const settingTimeout = settings.get('timeoutMs', 0);
+    let executable;
+    let timeoutMs;
+    try {
+      ({ executable, timeoutMs } = resolveExecution({
+        config: config.execution,
+        settingNode,
+        settingTimeout,
+        env: process.env,
+        root: state.root,
+      }));
+    } catch (failure) {
+      fail(state, failure, manual);
+      return true;
+    }
     state.status = 'running';
     paint();
+    const startedAt = Date.now();
+    const context = processContext(executable, state.root, timeoutMs);
+    output.appendLine(`[${state.root}] Starting scan: ${context}`);
     state.child = execFile(
-      process.execPath,
+      executable,
       [cliPath, '--root', state.root],
       {
         cwd: state.root,
-        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
-        timeout: 30000,
+        env: process.env,
+        timeout: timeoutMs,
         maxBuffer: 16 * 1024 * 1024,
       },
       (error, stdout, stderr) => {
@@ -224,7 +259,15 @@ function activate(context) {
         state.child = undefined;
 
         try {
-          if (error) throw new Error(stderr.trim() || error.message);
+          if (error) {
+            throw processFailure(
+              error,
+              stderr,
+              context,
+              Date.now() - startedAt,
+              timeoutMs,
+            );
+          }
           const report = readReport(state.root, stdout);
           if (report.scope !== state.scope) {
             throw new Error('The configured scope changed during the scan. Refresh to load the current scope.');
@@ -255,7 +298,7 @@ function activate(context) {
           }
           diagnostics.set(entries);
           state.status = 'ready';
-          output.appendLine(`[${state.root}] Scanned ${report.scannedFiles} files. ${entries.length} files with visible findings.`);
+          output.appendLine(`[${state.root}] Scanned ${report.scannedFiles} files in ${Date.now() - startedAt} ms. ${entries.length} files with visible findings.`);
         } catch (failure) {
           fail(state, failure, manual);
           return;
@@ -279,7 +322,7 @@ function activate(context) {
     if (folder.uri.scheme !== 'file' || folders.has(folder.uri.fsPath)) return;
     const root = folder.uri.fsPath;
     const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(folder, configName));
-    const state = { root, watcher, files: new Map(), generation: 0, status: 'idle' };
+    const state = { root, folder, watcher, files: new Map(), generation: 0, status: 'idle' };
     folders.set(root, state);
     watcher.onDidCreate(() => schedule(state));
     watcher.onDidChange(() => schedule(state));
