@@ -21,7 +21,11 @@ Create `rule-lens.json` in the VS Code workspace folder:
 ```json
 {
   "scope": "src/features/search",
-  "rules": ["trailing-whitespace", "merge-conflict-marker", "./rules/project-rule.cjs"]
+  "rules": [
+    "core/trailing-whitespace",
+    "core/merge-conflict-marker",
+    "./rules/project-rule.cjs"
+  ]
 }
 ```
 
@@ -37,11 +41,30 @@ For a project-owned whole-scope scanner, use an executable ESM module instead:
 The `.mjs` module must default-export an async or synchronous function receiving
 `{ root, scope }`. It returns `scannedFiles`, `rules`, and `findings`. RuleLens
 adds the portable report schema and configured scope after validating the result.
-Choose exactly one of `rules` or `scanner`.
+Use `scanner` by itself. Use `rules` with optional `ruleSources` for named packs.
+
+For a project-owned named rule pack, keep the source in the project's Git
+repository and select its rules by stable ID:
+
+```json
+{
+  "scope": "src/features/search",
+  "ruleSources": ["./scripts/search-review.mjs"],
+  "rules": ["search-review/accessibility/*", "search-review/import-boundary"]
+}
+```
+
+Each rule source default-exports the same scanner function. It returns its full
+rule catalog and findings. RuleLens filters the report with the configured exact
+IDs and trailing `*` prefixes. Sources receive the selected IDs as `rules` so
+they can skip unnecessary work. Rule IDs must be unique across all sources.
 
 Set `scope` to an existing subfolder. The scanner visits its nested directories and reads regular UTF-8 text files. It skips binary files and symbolic links. An empty scope, the workspace root, and paths that leave the workspace are invalid. A workspace without a config has no active review.
 
-The two built-in rules are opt-in. Remove the example plugin entry if you do not have a local rule file. Rule modules are executable Node code. Review them before enabling a workspace or running the CLI. Rules can access files with the user's permissions. The scope limits the scanner's own file traversal.
+Bundled rules are opt-in and live in `rules/`. See `rules/README.md` before
+adding one. Project rule modules and sources are executable Node code. Review
+them before enabling a workspace or running the CLI. They can access files with
+the user's permissions. The scope limits only RuleLens's built-in traversal.
 
 Open the workspace in trusted mode. Findings appear in **Problems** and beside the affected lines. Run **RuleLens: Show File Findings** to inspect and jump to a finding in the active file. Saving a file in scope triggers a refresh. Use **RuleLens: Refresh** to rescan after external edits or **RuleLens: Clear** to remove markers.
 
@@ -56,6 +79,23 @@ node /path/to/rule-lens/cli.cjs --root /path/to/workspace > /tmp/rule-lens.json
 Save source edits before running the CLI. A successful scan exits with code zero, including scans with findings. Configuration and execution errors exit nonzero and write a message to stderr.
 
 Give the agent the JSON report and access to the same workspace. `findings` contains the workspace-relative file, rule ID, severity, message, and 1-based UTF-16 line and column. Match each `ruleId` to `rules[].id` for remediation guidance. Ask the agent to read the cited source and use the guidance to propose a fix. Review output provides evidence. Your task request defines which changes the agent can make.
+
+List the configured named rules without retaining the findings output:
+
+```sh
+node /path/to/rule-lens/cli.cjs --root /path/to/workspace --list-rules
+```
+
+## Bundled rule names
+
+- `core/trailing-whitespace`
+- `core/merge-conflict-marker`
+- `source/no-parent-relative-import`
+- `javascript/no-direct-intl`
+- `react/no-manual-use-memo`
+- `styles/no-important`
+- `styles/no-literal-pixels`
+- `styles/no-hex-color`
 
 ## Add a project rule
 

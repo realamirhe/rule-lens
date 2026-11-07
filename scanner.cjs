@@ -2,68 +2,14 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { TextDecoder } = require("node:util");
 const { pathToFileURL } = require("node:url");
+const catalog = require("./rules/index.cjs");
 
 const decoder = new TextDecoder("utf-8", { fatal: true });
 const binaryControls = /[\x00-\x08\x0b\x0e-\x1f]/;
 
-function checkLines(text, checkLine) {
-  const findings = [];
-  for (const [index, line] of text.split(/\r\n|\r|\n/).entries()) {
-    const finding = checkLine(line);
-    if (finding) {
-      findings.push({ ...finding, line: index + 1 });
-    }
-  }
-  return findings;
-}
-
-const builtins = new Map([
-  [
-    "trailing-whitespace",
-    {
-      id: "trailing-whitespace",
-      guidance: "Remove spaces and tabs at the end of the line.",
-      check({ text }) {
-        return checkLines(text, (line) => {
-          const column = line.search(/[ \t]+$/) + 1;
-          if (column) {
-            return {
-              severity: "warning",
-              column,
-              message: "Trailing whitespace.",
-            };
-          }
-        });
-      },
-    },
-  ],
-  [
-    "merge-conflict-marker",
-    {
-      id: "merge-conflict-marker",
-      guidance: "Resolve the merge conflict and remove the conflict markers.",
-      check({ text }) {
-        let inConflict = false;
-        return checkLines(text, (line) => {
-          if (/^<{7,}(?:[ \t]|$)/.test(line)) {
-            inConflict = true;
-          } else if (/^>{7,}(?:[ \t]|$)/.test(line)) {
-            inConflict = false;
-          } else if (
-            !inConflict ||
-            !/^(?:\|{7,}(?:[ \t]|$)|={7,}[ \t]*$)/.test(line)
-          ) {
-            return;
-          }
-          return {
-            severity: "error",
-            column: 1,
-            message: "Unresolved merge conflict marker.",
-          };
-        });
-      },
-    },
-  ],
+const aliases = new Map([
+  ["trailing-whitespace", "core/trailing-whitespace"],
+  ["merge-conflict-marker", "core/merge-conflict-marker"],
 ]);
 
 function workspacePath(root, relative, label, finalType) {
@@ -100,7 +46,9 @@ function workspacePath(root, relative, label, finalType) {
 function loadRules(root, entries) {
   const ids = new Set();
   return entries.map((entry) => {
-    let rule = builtins.get(entry);
+    const alias = aliases.get(entry);
+    let rule = catalog.get(alias || entry);
+    if (rule && alias) rule = { ...rule, id: entry };
     if (!rule) {
       if (
         typeof entry !== "string" ||
@@ -189,8 +137,15 @@ function readConfig(workspaceRoot) {
   const scope = workspacePath(root, config?.scope, "Scope", "directory");
   const hasRules = Array.isArray(config.rules);
   const hasScanner = config.scanner !== undefined;
-  if (hasRules === hasScanner) {
-    throw new Error("Configuration must define exactly one of rules or scanner.");
+  const hasRuleSources = config.ruleSources !== undefined;
+  if (hasScanner && (hasRules || hasRuleSources)) {
+    throw new Error("Scanner cannot be combined with rules or ruleSources.");
+  }
+  if (!hasScanner && !hasRules) {
+    throw new Error("Configuration must define rules or scanner.");
+  }
+  if (hasRuleSources && !Array.isArray(config.ruleSources)) {
+    throw new Error("Configuration ruleSources must be an array.");
   }
   if (hasScanner) {
     const scanner = workspacePath(root, config.scanner, "Scanner", "file");
@@ -199,13 +154,23 @@ function readConfig(workspaceRoot) {
     }
     return { root, scope, scanner };
   }
-  return { root, scope, ruleEntries: config.rules };
+  const ruleSources = (config.ruleSources || []).map((entry) => {
+    const source = workspacePath(root, entry, "Rule source", "file");
+    if (!source.relative.endsWith(".mjs")) {
+      throw new Error("Rule source must point to an .mjs module.");
+    }
+    return source;
+  });
+  return { root, scope, ruleEntries: config.rules, ruleSources };
 }
 
 function scan(workspaceRoot) {
-  const { root, scope, ruleEntries } = readConfig(workspaceRoot);
+  const { root, scope, ruleEntries, ruleSources } = readConfig(workspaceRoot);
   if (!ruleEntries) {
     throw new Error("This configuration uses a scanner module; use scanWorkspace().");
+  }
+  if (ruleSources?.length) {
+    throw new Error("This configuration uses rule sources; use scanWorkspace().");
   }
   const rules = loadRules(root, ruleEntries);
   let scannedFiles = 0;
@@ -232,6 +197,56 @@ function scan(workspaceRoot) {
     scannedFiles,
     rules: rules.map(({ id, guidance }) => ({ id, guidance })),
     findings,
+  };
+}
+
+function selectedRuleIds(selectors, available) {
+  const selected = new Set();
+  for (const selector of selectors) {
+    if (typeof selector !== "string" || !selector) {
+      throw new Error("Rule selectors must be non-empty strings.");
+    }
+    const matches = selector.endsWith("*")
+      ? available.filter((id) => id.startsWith(selector.slice(0, -1)))
+      : available.filter((id) => id === selector);
+    if (!matches.length) throw new Error(`Unknown rule selector: ${selector}`);
+    for (const id of matches) selected.add(id);
+  }
+  return selected;
+}
+
+async function scanRuleSources(config) {
+  const reports = [];
+  for (const source of config.ruleSources) {
+    const loaded = await import(pathToFileURL(source.absolute).href);
+    if (typeof loaded.default !== "function") {
+      throw new Error(`Rule source must export a default function: ${source.relative}`);
+    }
+    reports.push(
+      validateScannerReport(
+        await loaded.default({
+          root: config.root,
+          scope: config.scope.relative,
+          rules: config.ruleEntries,
+        }),
+        config.scope.relative,
+      ),
+    );
+  }
+  const allRules = reports.flatMap((report) => report.rules);
+  const available = allRules.map((rule) => rule.id);
+  if (new Set(available).size !== available.length) {
+    throw new Error("Rule sources returned duplicate rule IDs.");
+  }
+  const selected = selectedRuleIds(config.ruleEntries, available);
+  return {
+    schemaVersion: 1,
+    scope: config.scope.relative,
+    scannedFiles: Math.max(0, ...reports.map((report) => report.scannedFiles)),
+    rules: allRules.filter((rule) => selected.has(rule.id)),
+    findings: reports
+      .flatMap((report) => report.findings)
+      .filter((finding) => selected.has(finding.ruleId)),
   };
 }
 
@@ -281,6 +296,7 @@ function validateScannerReport(report, scope) {
 
 async function scanWorkspace(workspaceRoot) {
   const config = readConfig(workspaceRoot);
+  if (config.ruleSources?.length) return scanRuleSources(config);
   if (!config.scanner) return scan(config.root);
   const loaded = await import(pathToFileURL(config.scanner.absolute).href);
   if (typeof loaded.default !== "function") {

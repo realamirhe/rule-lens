@@ -77,6 +77,11 @@ def package(target):
         "cli.cjs",
         "scanner.cjs",
         *sorted(str(file.relative_to(ROOT).as_posix()) for file in (ROOT / "media").glob("*.svg")),
+        *sorted(
+            str(file.relative_to(ROOT).as_posix())
+            for file in (ROOT / "rules").rglob("*")
+            if file.is_file()
+        ),
     ]
     target.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:

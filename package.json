@@ -3,7 +3,7 @@
   "displayName": "RuleLens",
   "description": "Show scoped review findings in VS Code and export the same findings for agents.",
   "publisher": "rule-lens-local",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "engines": {
     "node": ">=18.3",

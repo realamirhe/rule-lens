@@ -164,13 +164,59 @@ test("loads a project scanner and validates its report", async (t) => {
   assert.throws(() => scan(root), /use scanWorkspace/);
 });
 
+test("selects named rules from project-owned rule sources", async (t) => {
+  const root = workspace(t);
+  fs.writeFileSync(
+    path.join(root, "rule-lens.json"),
+    JSON.stringify({
+      scope: "target",
+      ruleSources: ["./review.mjs"],
+      rules: ["project/accessibility/*"],
+    }),
+  );
+  fs.writeFileSync(
+    path.join(root, "review.mjs"),
+    [
+      "export default ({ rules }) => ({",
+      "  scannedFiles: rules.length,",
+      "  rules: [",
+      '    { id: "project/accessibility/name", guidance: "Add a name." },',
+      '    { id: "project/style/color", guidance: "Use a token." },',
+      "  ],",
+      "  findings: [",
+      '    { file: "target/a.tsx", ruleId: "project/accessibility/name", severity: "error", line: 1, column: 1, message: "Missing name." },',
+      '    { file: "target/a.tsx", ruleId: "project/style/color", severity: "warning", line: 2, column: 1, message: "Direct color." },',
+      "  ],",
+      "});",
+    ].join("\n"),
+  );
+
+  const report = await scanWorkspace(root);
+  assert.equal(report.scannedFiles, 1);
+  assert.deepEqual(report.rules.map((rule) => rule.id), [
+    "project/accessibility/name",
+  ]);
+  assert.deepEqual(report.findings.map((finding) => finding.ruleId), [
+    "project/accessibility/name",
+  ]);
+});
+
+test("loads namespaced bundled rules", (t) => {
+  const root = workspace(t);
+  writeConfig(root, "target", ["source/no-parent-relative-import"]);
+  fs.writeFileSync(path.join(root, "target", "a.ts"), 'import x from "../x";\n');
+  const report = scan(root);
+  assert.equal(report.rules[0].id, "source/no-parent-relative-import");
+  assert.equal(report.findings[0].column, 16);
+});
+
 test("rejects invalid scanner configuration and output", async (t) => {
   const root = workspace(t);
   const config = (value) =>
     fs.writeFileSync(path.join(root, "rule-lens.json"), JSON.stringify(value));
 
   config({ scope: "target", rules: [], scanner: "./scanner.mjs" });
-  assert.throws(() => readConfig(root), /exactly one/);
+  assert.throws(() => readConfig(root), /cannot be combined/);
 
   config({ scope: "target", scanner: "./scanner.cjs" });
   fs.writeFileSync(path.join(root, "scanner.cjs"), "module.exports = () => ({});");
@@ -225,6 +271,17 @@ test("CLI emits JSON on success, uses cwd by default, and reports errors on stde
   assert.equal(implicit.status, 0);
   assert.equal(implicit.stdout, explicit.stdout);
 
+  const list = spawnSync(process.execPath, [cli, "--root", root, "--list-rules"], {
+    encoding: "utf8",
+  });
+  assert.equal(list.status, 0);
+  assert.deepEqual(JSON.parse(list.stdout), [
+    {
+      id: "trailing-whitespace",
+      guidance: "Remove spaces and tabs at the end of the line.",
+    },
+  ]);
+
   fs.writeFileSync(path.join(root, "rule-lens.json"), "{ broken");
   const error = spawnSync(process.execPath, [cli], { cwd: root, encoding: "utf8" });
   assert.equal(error.status, 1);
@@ -234,4 +291,5 @@ test("CLI emits JSON on success, uses cwd by default, and reports errors on stde
   const help = spawnSync(process.execPath, [cli, "--help"], { encoding: "utf8" });
   assert.equal(help.status, 0);
   assert.match(help.stdout, /Usage: rule-lens/);
+
 });
