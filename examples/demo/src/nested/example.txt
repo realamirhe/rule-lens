@@ -1,0 +1,6 @@
+REVIEW_ME: Verify this behavior before release.
+<<<<<<< HEAD
+Current content
+=======
+Incoming content
+>>>>>>> proposed-change

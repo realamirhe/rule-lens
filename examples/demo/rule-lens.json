@@ -1,0 +1,4 @@
+{
+  "scope": "src",
+  "rules": ["trailing-whitespace", "merge-conflict-marker", "./rules/review-note.cjs"]
+}

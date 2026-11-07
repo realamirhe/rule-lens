@@ -1,0 +1,35 @@
+{
+  "name": "rule-lens",
+  "displayName": "RuleLens",
+  "description": "Show scoped review findings in VS Code and export the same findings for agents.",
+  "publisher": "rule-lens-local",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=18.3",
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Linters"],
+  "main": "./extension.cjs",
+  "bin": {
+    "rule-lens": "./cli.cjs"
+  },
+  "extensionKind": ["workspace"],
+  "activationEvents": ["onStartupFinished"],
+  "capabilities": {
+    "untrustedWorkspaces": { "supported": false },
+    "virtualWorkspaces": { "supported": false }
+  },
+  "contributes": {
+    "commands": [
+      { "command": "ruleLens.refresh", "title": "RuleLens: Refresh" },
+      { "command": "ruleLens.showFileFindings", "title": "RuleLens: Show File Findings" },
+      { "command": "ruleLens.clear", "title": "RuleLens: Clear" }
+    ]
+  },
+  "scripts": {
+    "test": "node --test",
+    "package:extension": "python3 scripts/vsix.py package",
+    "install:extension": "python3 scripts/vsix.py install"
+  }
+}
