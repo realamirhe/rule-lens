@@ -1,6 +1,7 @@
 # RuleLens
 
 RuleLens shows findings in VS Code and exports the same findings as JSON for an agent. Each workspace selects one subfolder to scan and supplies its own rules.
+<img width="1280" height="269" alt="telegram-cloud-photo-size-4-6008046055083150926-y" src="https://github.com/user-attachments/assets/ba295fef-51da-44ee-b7ea-d04cbea871a2" />
 
 ## Install from source
 
